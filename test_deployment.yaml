@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp-deployment
+  labels:
+    app: webapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: webapp
+  template:
+    metadata:
+      labels:
+        app: webapp
+    spec:
+      containers:
+      - name: webapp
+        image: webapp:latest
+
+        ports:
+        - name: liveness-port
+          containerPort: 8080
+          hostPort: 8080
+
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "1" #добавил большой лимит по процессору, чтобы дать возможность поду взять больше ресурсов на первые запросы
+                     #либо можно не ограничивать его, но, полагаю, что это прохая практика
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: liveness-port
+          initialDelaySeconds: 10 #указал,чтобы дать приложению время на инициализацию
+          failureThreshold: 5
+          periodSeconds: 5
+        #допустим, что в 2 зонах по 2 воркера, в еще одной - один. При таких параметрах на ноде может быть  
+        #один под
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: zone
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app: webapp
+          - maxSkew: 1
+            topologyKey: node
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                app: webapp
+#добавил для обработки сценариа автомасштабирования деплоймента по нагрузке и экономии ресурсов в 
+#ночное время
+---
+apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: webapp
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: webapp-deployment
+  minReplicas: 2 #указал минимум 2 реплики, чтобы и ночью иметь отказоустойчивость
+  maxReplicas: 4 #указал исходя из имеющихся данных по обработке пиковой нагрузки
+  targetCPUUtilizationPercentage: 80
+     
+ 
